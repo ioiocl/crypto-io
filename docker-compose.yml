@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # Redis - Message bus and state storage
+  redis:
+    image: redis:7-alpine
+    container_name: finbot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - finbot-network
+
+  # Ingestion Service - WebSocket client to Binance (Crypto only)
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: ingestion-service/Dockerfile
+    container_name: finbot-ingestion
+    environment:
+      # Binance API (Crypto - 24/7)
+      - BINANCE_SYMBOLS=${BINANCE_SYMBOLS:-btc,eth,bnb,sol,xrp}
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUARKUS_REDIS_HOSTS=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
+  # Analytics Service - Bayesian, ARIMA, Monte Carlo analysis
+  analytics-service:
+    build:
+      context: .
+      dockerfile: analytics-service/Dockerfile
+    container_name: finbot-analytics
+    environment:
+      - ANALYTICS_SYMBOLS=${ANALYTICS_SYMBOLS:-BTC,ETH,BNB,SOL,XRP}
+      - SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-5s}
+      - MONTE_CARLO_HORIZON_DAYS=${MONTE_CARLO_HORIZON_DAYS:-7}
+      - MONTE_CARLO_SIMULATIONS=${MONTE_CARLO_SIMULATIONS:-10000}
+      - ARIMA_HORIZON_PERIODS=${ARIMA_HORIZON_PERIODS:-7}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUARKUS_REDIS_HOSTS=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
+  # WebSocket API - Real-time data streaming to clients
+  websocket-api:
+    build:
+      context: .
+      dockerfile: websocket-api/Dockerfile
+    container_name: finbot-websocket-api
+    ports:
+      - "8080:8080"
+    environment:
+      - BROADCAST_SYMBOLS=${BROADCAST_SYMBOLS:-BTC,ETH,BNB,SOL,XRP}
+      - BROADCAST_INTERVAL=${BROADCAST_INTERVAL:-1s}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUARKUS_REDIS_HOSTS=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
+  # Dashboard - React frontend
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: finbot-dashboard
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_WEBSOCKET_URL=ws://localhost:8080/ws/market
+    depends_on:
+      - websocket-api
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  finbot-network:
+    driver: bridge
