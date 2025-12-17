@@ -108,6 +108,171 @@ REDIS_PORT=6379
   - Conditional VaR (CVaR/Expected Shortfall)
   - Percentile distributions
 
+## 🎨 Esta “máquina de análisis” explicada para el mundo del arte (especialmente pintores)
+
+Finbot toma señales de mercado en tiempo real y las transforma en un “mapa de escenarios”: no te da una sola predicción, sino un abanico de posibilidades con nivel de confianza y riesgo.
+
+Si lo miras desde un taller de pintura:
+
+- **Los datos (ticks de mercado)** son como el modelo posando o el paisaje frente a ti: cambian segundo a segundo.
+- **El análisis ABC (ARIMA–Bayes–Carlo)** es el proceso creativo:
+  - **ARIMA** es el *boceto*: detecta la dirección del gesto (tendencia) y si hubo un quiebre brusco (como si cambiara la luz o la composición).
+  - **Bayes** es la *mezcla de pigmentos*: ajusta tu expectativa con cada nueva pincelada; combina lo que “esperabas” con lo que “estás viendo” y lo convierte en impulso (`drift`) y variación (`volatility`).
+  - **Monte Carlo** es hacer *muchas versiones del cuadro*: miles de variaciones plausibles del futuro a partir del boceto y la paleta. El resultado es una distribución: qué tan probable es subir/bajar y qué tan dura podría ser una mala escena.
+
+### Qué problema resuelve
+
+- **Evita el “oráculo”**: en vez de “mañana estará en X”, te entrega escenarios y probabilidades.
+- **Distingue energía vs. ruido**: separa tendencia (gesto) de volatilidad (textura/agitación).
+- **Entrega riesgo legible**: muestra umbrales de pérdida probable (VaR) y qué pasa en el peor rincón del abanico (CVaR).
+
+### Cómo leer los resultados (traducción al lenguaje visual)
+
+- **`drift`**: inclinación del movimiento esperado; hacia dónde tiende el trazo general.
+- **`volatility`**: “temblor” o granulado; a mayor volatilidad, más incertidumbre.
+- **`confidence`**: qué tan seguro está el sistema de que el boceto y la paleta representan bien lo que ocurre ahora.
+- **`probabilityUp` / `probabilityDown`**: qué parte del abanico de versiones termina arriba o abajo del punto de partida.
+- **`percentiles` (5/25/50/75/95)**: marcas para leer escenarios.
+  - **50**: escenario “central” (mediano).
+  - **5** y **95**: bordes (versiones más extremas).
+- **`VaR95` / `VaR99`**: pérdida umbral en días malos (en un porcentaje de casos adversos).
+- **`CVaR`**: promedio de las peores escenas (cuando todo sale especialmente mal).
+
+### Qué significa “quiebre estructural” (cuando cambia la escena)
+
+ARIMA intenta detectar cuando el patrón cambia de régimen (noticia fuerte, anuncio, shock). En analogía: estabas pintando con luz cálida de tarde y de pronto cambian a una luz fría. En esos casos, el sistema puede indicar que necesita recalibración y bajar la confianza.
+
+### Para profundizar
+
+Si quieres la explicación técnica completa del pipeline **ARIMA–Bayes–Carlo**, revisa `ABC_ANALYSIS.md`.
+
+## 🧒 README para niños y niñas de 10 años
+
+Finbot es como un “robot” que mira precios que suben y bajan (como si fueran puntos en un videojuego) y trata de entender qué podría pasar después.
+
+### ¿Qué hace Finbot?
+
+- **Mira precios en vivo** (por ejemplo, de una acción como AAPL).
+- **Hace cálculos** para entender si el precio parece estar subiendo, bajando o cambiando muy rápido.
+- **Te muestra resultados** en una pantalla (dashboard) y los envía en tiempo real.
+
+### La idea más importante
+
+Finbot no puede ver el futuro como magia. Lo que hace es:
+
+- mirar lo que pasó recién,
+- imaginar muchos “futuros posibles”,
+- y decirte cuáles parecen más probables.
+
+### La “máquina de análisis” en 3 pasos (ABC)
+
+Imagina que estás jugando y quieres adivinar el próximo movimiento:
+
+1. **ARIMA (el detector de dirección)**
+   - Mira si el precio va más bien para arriba o para abajo.
+   - También intenta detectar si “pasó algo raro” y cambió todo de golpe.
+
+2. **Bayes (el ajustador inteligente)**
+   - Si llega información nueva, cambia su opinión.
+   - Como cuando en un juego cambias tu estrategia porque el enemigo hizo algo distinto.
+
+3. **Monte Carlo (el simulador de muchos mundos)**
+   - Imagina miles de caminos distintos que el precio podría seguir.
+   - Después cuenta cuántos caminos terminan arriba y cuántos terminan abajo.
+
+### Mini-glosario
+
+- **Probabilidad**: una forma de decir “qué tan posible” es algo.
+- **Volatilidad**: qué tanto se mueve el precio (si salta mucho, es más volátil).
+- **Riesgo**: qué tan feo podría salir si las cosas salen mal.
+
+### Regla de oro
+
+Este proyecto es para aprender y experimentar. No es un consejo para invertir.
+
+## ⚡ README para expertos en HFT (ideas y expansión del motor de análisis)
+
+Esta sección asume familiaridad con microestructura, latencia y modelado en tiempo/evento. El objetivo es mapear el motor actual (ABC + métricas de riesgo) a un roadmap de evolución hacia señales y ejecución estilo HFT.
+
+### Qué hace hoy (visión HFT)
+
+- **Ingesta**: stream de trades/quotes desde WebSocket → normalización → Redis Pub/Sub.
+- **Analytics**: snapshot por símbolo con:
+  - señal de tendencia/breaks (ARIMA simplificado + CUSUM)
+  - actualización bayesiana de `drift/volatility` (momento + incertidumbre)
+  - simulación Monte Carlo (GBM) para distribución de outcomes y VaR/CVaR
+- **Entrega**: broadcast a clientes por WebSocket.
+
+Lo anterior está orientado a *risk/trend sensing* en “tick time”, no a ejecución sub-milisegundo. Aun así, la estructura por capas permite evolucionar hacia microestructura real.
+
+### Consideraciones de latencia y arquitectura (si quieres acercarte a HFT)
+
+- **Presupuestos de latencia**: Redis Pub/Sub + JSON + WebSocket introducen overhead; para HFT real deberías separar “research/monitoring” de “execution path”.
+- **Event-time**: para mercado, el orden de eventos importa. Define una semántica clara:
+  - timestamp del exchange vs. timestamp de recepción
+  - monotonic ordering por símbolo
+  - tolerancia a out-of-order (buffer corto + watermark)
+- **Determinismo y backtest**: si quieres reproducibilidad, captura el stream crudo y reproduce exactamente (misma semilla en Monte Carlo, mismos parámetros, mismos cortes de ventana).
+
+### Puntos de extensión (dónde enganchar nuevos módulos)
+
+- **Domain layer** (`analytics-service/.../domain/`): agrega analizadores puros (sin IO) y DTOs de resultados.
+- **Application layer** (`MarketAnalysisService`): orquesta el pipeline, decide ventanas, triggers y composición de señales.
+- **Infrastructure/adapters**: nuevos feeds (FIX, ITCH, REST), nuevos buses (Kafka/NATS), y persistencia de ticks/snapshots.
+
+### Expansiones recomendadas (de mayor impacto para HFT)
+
+#### 1) Order Book / L2 y microestructura
+
+- Consumir **quotes L1/L2** (bid/ask, depth) y construir un **order book incremental**.
+- Features típicas:
+  - microprice / imbalance (top-of-book y depth-weighted)
+  - queue dynamics (si el feed lo permite)
+  - spread, realized spread, short-term volatility
+  - trade sign (Lee–Ready) y agresión
+
+#### 2) Modelos en tiempo de evento (no en días)
+
+- Reemplazar o complementar GBM diario por modelos en horizontes cortos:
+  - random walk con drift local y *state-dependent volatility*
+  - Hawkes (intensidad de trades) o modelos autoregresivos de order flow
+  - estimación online (EWMA/Kalman) para parámetros intradía
+
+#### 3) Señales de régimen intradía
+
+- Extender el concepto de “structural break” a microestructura:
+  - change-point detection sobre spread/imbalance/volatilidad
+  - detección de “liquidity droughts”
+  - clasificación de regímenes por volatilidad + spreads + agresión
+
+#### 4) Riesgo y métricas para decisión (no solo VaR)
+
+- Añadir:
+  - expected shortfall por horizonte corto
+  - drawdown distribution
+  - slippage / adverse selection estimada
+  - límites por exposición, inventory y kill-switch
+
+#### 5) Motor de ejecución (separado del motor de análisis)
+
+- Crear un servicio nuevo (p.ej. `execution-service`) con su propio dominio:
+  - smart order routing / execution algos
+  - simulación de fills (paper trading) y latencia modelada
+  - integración FIX (o API broker) vía adapters
+
+#### 6) Research & backtesting
+
+- Persistir ticks crudos (parquet/duckdb/postgres/time-series) y habilitar:
+  - replay determinista
+  - evaluación de señales (precision/recall, hit-rate, PnL attribution)
+  - walk-forward y validación por régimen
+
+### Ideas concretas para el ABC engine (sin romper lo existente)
+
+- **Monte Carlo “micro”**: en vez de horizonte en días, usar `N` eventos o segundos con parámetros intradía y colas pesadas (mixture/Student-t).
+- **Bayes informativo**: priors que dependan de microestructura (imbalance → prior drift; spread/vol → prior variance).
+- **Triggers**: cuando CUSUM detecta break, además de “recalibrar”, cambiar de modelo (fallback a conservador o “no-trade zone”).
+
 ## 🏢 Cloud Deployment
 
 ### Alibaba Cloud (ECS)
