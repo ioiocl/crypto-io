@@ -1,6 +1,7 @@
 package cl.ioio.finbot.analytics.domain;
 
 import cl.ioio.finbot.domain.model.MonteCarloResults;
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.math3.distribution.NormalDistribution;
@@ -133,6 +134,36 @@ public class MonteCarloSimulator {
      */
     public MonteCarloResults simulate(BigDecimal currentPrice, double drift, double volatility) {
         return simulate(currentPrice, drift, volatility, defaultSimulations, defaultHorizon);
+    }
+    
+    /**
+     * Reactive version of simulate - executes computation on virtual thread (Java 21)
+     * Virtual threads allow 10K+ concurrent simulations without memory overhead
+     * @param currentPrice current price
+     * @param drift expected return (mu)
+     * @param volatility standard deviation (sigma)
+     * @param simulations number of simulations
+     * @param horizon time horizon in days
+     * @return Uni with Monte Carlo results
+     */
+    public Uni<MonteCarloResults> simulateReactive(
+            BigDecimal currentPrice, 
+            double drift, 
+            double volatility,
+            int simulations,
+            int horizon) {
+        
+        return Uni.createFrom().item(() -> simulate(currentPrice, drift, volatility, simulations, horizon))
+            .runSubscriptionOn(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
+            .onFailure().invoke(e -> log.error("Error in reactive Monte Carlo simulation", e))
+            .onFailure().recoverWithItem(() -> createDefaultResults(simulations));
+    }
+    
+    /**
+     * Reactive simulate with default parameters
+     */
+    public Uni<MonteCarloResults> simulateReactive(BigDecimal currentPrice, double drift, double volatility) {
+        return simulateReactive(currentPrice, drift, volatility, defaultSimulations, defaultHorizon);
     }
     
     /**

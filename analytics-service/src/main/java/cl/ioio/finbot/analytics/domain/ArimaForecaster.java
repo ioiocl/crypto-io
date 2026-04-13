@@ -1,6 +1,7 @@
 package cl.ioio.finbot.analytics.domain;
 
 import cl.ioio.finbot.domain.model.ArimaForecast;
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
@@ -99,6 +100,27 @@ public class ArimaForecaster {
     public ArimaForecast forecast(List<BigDecimal> prices) {
         log.debug("Using ARIMA configuration: horizon={} periods", defaultHorizon);
         return forecast(prices, defaultHorizon);
+    }
+    
+    /**
+     * Reactive version of forecast - executes computation on virtual thread (Java 21)
+     * Virtual threads enable unlimited concurrent forecasts without thread pool bottleneck
+     * @param prices historical prices
+     * @param horizon number of periods to forecast
+     * @return Uni with ARIMA forecast
+     */
+    public Uni<ArimaForecast> forecastReactive(List<BigDecimal> prices, int horizon) {
+        return Uni.createFrom().item(() -> forecast(prices, horizon))
+            .runSubscriptionOn(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
+            .onFailure().invoke(e -> log.error("Error in reactive ARIMA forecasting", e))
+            .onFailure().recoverWithItem(() -> createDefaultForecast(horizon));
+    }
+    
+    /**
+     * Reactive forecast with default horizon
+     */
+    public Uni<ArimaForecast> forecastReactive(List<BigDecimal> prices) {
+        return forecastReactive(prices, defaultHorizon);
     }
     
     /**

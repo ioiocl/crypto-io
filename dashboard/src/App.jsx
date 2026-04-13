@@ -4,6 +4,7 @@ import SymbolCard from './components/SymbolCard'
 import './App.css'
 
 const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL || 'ws://localhost:8080/ws/market'
+const CONTEXT_WEBSOCKET_URL = import.meta.env.VITE_CONTEXT_WEBSOCKET_URL || 'ws://localhost:8080/ws/context'
 const CRYPTO_SYMBOLS = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP']
 const DEFAULT_SYMBOLS = CRYPTO_SYMBOLS
 
@@ -11,14 +12,17 @@ const isCrypto = (symbol) => CRYPTO_SYMBOLS.includes(symbol)
 
 function App() {
   const [snapshots, setSnapshots] = useState({})
+  const [contexts, setContexts] = useState({})
   const [connectionStatus, setConnectionStatus] = useState({})
   const [selectedSymbol, setSelectedSymbol] = useState(DEFAULT_SYMBOLS[0])
 
   useEffect(() => {
-    const connections = {}
+    const marketConnections = {}
+    const contextConnections = {}
 
     DEFAULT_SYMBOLS.forEach(symbol => {
       const ws = new WebSocket(`${WEBSOCKET_URL}/${symbol}`)
+      const contextWs = new WebSocket(`${CONTEXT_WEBSOCKET_URL}/${symbol}`)
 
       ws.onopen = () => {
         console.log(`Connected to ${symbol}`)
@@ -54,15 +58,30 @@ function App() {
         }, 5000)
       }
 
-      connections[symbol] = ws
+      contextWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.error) {
+            return
+          }
+          setContexts(prev => ({ ...prev, [symbol]: data }))
+        } catch (error) {
+          console.error(`Error parsing context message for ${symbol}:`, error)
+        }
+      }
+
+      marketConnections[symbol] = ws
+      contextConnections[symbol] = contextWs
     })
 
     return () => {
-      Object.values(connections).forEach(ws => ws.close())
+      Object.values(marketConnections).forEach(ws => ws.close())
+      Object.values(contextConnections).forEach(ws => ws.close())
     }
   }, [])
 
   const currentSnapshot = snapshots[selectedSymbol]
+  const currentContext = contexts[selectedSymbol]
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -130,6 +149,72 @@ function App() {
             </p>
           </div>
         )}
+
+        {/* AI + News + Strategy Panels */}
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-cyan-400" />
+              AI Panel
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Signal</span>
+                <span className="text-white font-semibold">{currentContext?.aiSignal || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Confidence</span>
+                <span className="text-white">{currentContext ? `${(currentContext.aiConfidence * 100).toFixed(1)}%` : 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block mb-1">Reasoning</span>
+                <p className="text-slate-200 text-xs leading-relaxed">{currentContext?.aiReasoning || 'Waiting for AI context...'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-orange-400" />
+              News Panel
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Sentiment</span>
+                <span className="text-white">{currentContext ? currentContext.newsSentiment.toFixed(2) : 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">News Volume</span>
+                <span className="text-white">{currentContext?.newsVolume ?? 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Symbol</span>
+                <span className="text-white">{selectedSymbol}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-green-400" />
+              Strategy Panel
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Current Decision</span>
+                <span className="text-white font-semibold">{currentContext?.decision || 'HOLD'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Trend</span>
+                <span className="text-white">{currentContext?.trend || currentSnapshot?.marketState || 'UNKNOWN'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Volatility</span>
+                <span className="text-white">{currentContext?.volatility ? `${(parseFloat(currentContext.volatility) * 100).toFixed(2)}%` : 'N/A'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* All Symbols Overview */}
         <div className="mt-12">

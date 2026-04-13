@@ -7,6 +7,8 @@ import cl.ioio.finbot.analytics.domain.MonteCarloSimulator;
 import cl.ioio.finbot.domain.model.*;
 import cl.ioio.finbot.domain.ports.AnalysisService;
 import cl.ioio.finbot.domain.ports.SnapshotRepository;
+import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.tuples.Tuple3;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -174,6 +176,99 @@ public class MarketAnalysisService implements AnalysisService {
         } else {
             return "NEUTRAL";
         }
+    }
+    
+    /**
+     * Generate snapshot reactively with parallel analysis execution
+     * Bayesian, ARIMA, and Monte Carlo run in parallel for better performance
+     * 
+     * @param symbol the symbol to analyze
+     * @return Uni with the market snapshot
+     */
+    public Uni<MarketSnapshot> generateSnapshotReactive(String symbol) {
+        List<MarketTick> window = tickWindows.get(symbol);
+        
+        if (window == null || window.size() < MIN_WINDOW_SIZE) {
+            log.warn("Insufficient data for {} (reactive): {} ticks", symbol, 
+                    window != null ? window.size() : 0);
+            return Uni.createFrom().item(() -> createDefaultSnapshot(symbol));
+        }
+        
+        return Uni.createFrom().item(() -> {
+            // Extract prices
+            List<BigDecimal> prices = window.stream()
+                    .map(MarketTick::getPrice)
+                    .filter(p -> p != null && p.compareTo(BigDecimal.ZERO) > 0)
+                    .toList();
+            
+            if (prices.isEmpty()) {
+                return null;
+            }
+            
+            return prices;
+        })
+        .onItem().ifNull().continueWith(List::of)
+        .onItem().transformToUni(prices -> {
+            if (prices.isEmpty()) {
+                return Uni.createFrom().item(() -> createDefaultSnapshot(symbol));
+            }
+
+            BigDecimal currentPrice = prices.get(prices.size() - 1);
+            
+            // Execute all three analyses in parallel using Uni.combine()
+            Uni<BayesianMetrics> bayesianUni = bayesianAnalyzer.analyzeReactive(prices);
+            Uni<ArimaForecast> arimaUni = arimaForecaster.forecastReactive(prices);
+            
+            // Monte Carlo needs Bayesian results, so we chain it
+            return bayesianUni
+                .onItem().transformToUni(bayesian -> {
+                    Uni<MonteCarloResults> monteCarloUni = monteCarloSimulator.simulateReactive(
+                        currentPrice,
+                        bayesian.getDrift().doubleValue(),
+                        bayesian.getVolatility().doubleValue()
+                    );
+                    
+                    // Combine all three results in parallel (ARIMA and MonteCarlo run together)
+                    return Uni.combine().all()
+                        .unis(
+                            Uni.createFrom().item(bayesian),
+                            arimaUni,
+                            monteCarloUni
+                        )
+                        .asTuple()
+                        .onItem().transform(tuple -> {
+                            BayesianMetrics bayesianMetrics = tuple.getItem1();
+                            ArimaForecast arimaForecast = tuple.getItem2();
+                            MonteCarloResults monteCarloResults = tuple.getItem3();
+                            
+                            // Perform ABC analysis
+                            ABCAnalysisResult abcAnalysis = abcAnalyzer.analyze(prices, currentPrice);
+                            String marketState = abcAnalysis.getMarketRegime();
+                            
+                            return MarketSnapshot.builder()
+                                .symbol(symbol)
+                                .timestamp(Instant.now())
+                                .currentPrice(currentPrice)
+                                .bayesianMetrics(bayesianMetrics)
+                                .arimaForecast(arimaForecast)
+                                .monteCarloResults(monteCarloResults)
+                                .marketState(marketState)
+                                .abcAnalysis(abcAnalysis)
+                                .build();
+                        });
+                });
+        })
+        .onItem().call(snapshot -> {
+            // Save snapshot reactively (non-blocking)
+            if (snapshot != null && !snapshot.getSymbol().equals("UNKNOWN")) {
+                return snapshotRepository.saveReactive(snapshot)
+                    .onItem().invoke(() -> log.info("Generated snapshot for {} (reactive): price={}, state={}", 
+                        symbol, snapshot.getCurrentPrice(), snapshot.getMarketState()));
+            }
+            return Uni.createFrom().voidItem();
+        })
+        .onFailure().invoke(e -> log.error("Error generating snapshot for " + symbol + " (reactive)", e))
+        .onFailure().recoverWithItem(() -> createDefaultSnapshot(symbol));
     }
     
     private MarketSnapshot createDefaultSnapshot(String symbol) {

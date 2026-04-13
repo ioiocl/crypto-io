@@ -18,6 +18,51 @@ services:
     networks:
       - finbot-network
 
+  # News Service - NewsAPI ingestion and sentiment scoring
+  news-service:
+    build:
+      context: .
+      dockerfile: news-service/Dockerfile
+    container_name: finbot-news
+    environment:
+      - NEWS_API_KEY=${NEWS_API_KEY:-}
+      - NEWS_SYMBOLS=${NEWS_SYMBOLS:-BTC,ETH,BNB,SOL,XRP}
+      - NEWS_POLL_INTERVAL=${NEWS_POLL_INTERVAL:-5m}
+      - NEWS_MAX_HEADLINES=${NEWS_MAX_HEADLINES:-5}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUARKUS_REDIS_HOSTS=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
+  # AI Decision Service - combines snapshots + news and emits market decisions/context
+  ai-decision-service:
+    build:
+      context: .
+      dockerfile: ai-decision-service/Dockerfile
+    container_name: finbot-ai-decision
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - DECISION_CONFIDENCE_FLOOR=${DECISION_CONFIDENCE_FLOOR:-0.55}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUARKUS_REDIS_HOSTS=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      analytics-service:
+        condition: service_started
+      news-service:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - finbot-network
+
   # Ingestion Service - WebSocket client to Binance (Crypto only)
   ingestion-service:
     build:
@@ -91,6 +136,7 @@ services:
       - "3000:80"
     environment:
       - VITE_WEBSOCKET_URL=ws://localhost:8080/ws/market
+      - VITE_CONTEXT_WEBSOCKET_URL=ws://localhost:8080/ws/context
     depends_on:
       - websocket-api
     restart: unless-stopped

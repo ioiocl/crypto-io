@@ -1,6 +1,7 @@
 package cl.ioio.finbot.analytics.domain;
 
 import cl.ioio.finbot.domain.model.BayesianMetrics;
+import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
@@ -99,6 +100,19 @@ public class BayesianAnalyzer {
         }
         
         return returns;
+    }
+    
+    /**
+     * Reactive version of analyze - executes computation on virtual thread (Java 21)
+     * Virtual threads provide massive concurrency without thread pool limits
+     * @param prices historical prices
+     * @return Uni with Bayesian metrics
+     */
+    public Uni<BayesianMetrics> analyzeReactive(List<BigDecimal> prices) {
+        return Uni.createFrom().item(() -> analyze(prices))
+            .runSubscriptionOn(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
+            .onFailure().invoke(e -> log.error("Error in reactive Bayesian analysis", e))
+            .onFailure().recoverWithItem(this::createDefaultMetrics);
     }
     
     private BayesianMetrics createDefaultMetrics() {

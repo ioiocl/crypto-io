@@ -67,6 +67,14 @@ public class RedisSnapshotRepositoryImpl implements SnapshotRepository {
     }
     
     @Override
+    public Uni<Void> saveReactive(MarketSnapshot snapshot) {
+        // Not implemented in WebSocket API (read-only)
+        return Uni.createFrom().failure(
+            new UnsupportedOperationException("WebSocket API is read-only")
+        );
+    }
+    
+    @Override
     public Optional<MarketSnapshot> findLatest(String symbol) {
         // This method should not be called from WebSocket context
         // Use findLatestReactive instead to avoid blocking
@@ -78,5 +86,13 @@ public class RedisSnapshotRepositoryImpl implements SnapshotRepository {
     public void delete(String symbol) {
         // Not implemented in WebSocket API (read-only)
         throw new UnsupportedOperationException("WebSocket API is read-only");
+    }
+    
+    @Override
+    public Uni<Void> deleteReactive(String symbol) {
+        // Not implemented in WebSocket API (read-only)
+        return Uni.createFrom().failure(
+            new UnsupportedOperationException("WebSocket API is read-only")
+        );
     }
 }
